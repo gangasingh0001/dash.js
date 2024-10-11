@@ -447,15 +447,95 @@ app.controller('DashController', ['$scope', '$window', 'sources', 'contributors'
         $scope.safeApply();
     }, $scope);
 
-    $scope.player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function (e) { /* jshint ignore:line */
+    $scope.player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function (e) {
         stopMetricsInterval();
-        $scope.videoQualities = $scope.player.getBitrateInfoListFor('video');
+        $scope.videoQualities = $scope.player.getTracksFor('video'); 
         $scope.chartCount = 0;
         $scope.metricsTimer = setInterval(function () {
             updateMetrics('video');
             updateMetrics('audio');
             $scope.chartCount++;
         }, $scope.updateMetricsInterval);
+
+        // Array to hold metrics data
+        let metricsData = [];
+        
+        // Function to collect and append metrics data to the array
+        function collectMetricsForAlgorithm() {
+    
+            // Get buffer level for video and audio
+            let videoBufferLevel = $scope.player.getBufferLength('video');
+            let audioBufferLevel = $scope.player.getBufferLength('audio');
+            
+            // Get throughput in Mbps
+            let throughput = $scope.player.getAverageThroughput('video') / 1000000; // Convert from bps to Mbps
+            
+            // Calculate average latency over the last 4 segments
+            let httpRequests = $scope.player.getDashMetrics().getHttpRequests('video');
+            let lastRequests = httpRequests.slice(-4); // Get the last 4 requests
+            let latencySum = lastRequests.reduce((sum, req) => {
+                if (req.tresponse && req.trequest) {
+                    return sum + (req.tresponse.getTime() - req.trequest.getTime());
+                }
+                return sum;
+            }, 0);
+            let averageLatency = latencySum / lastRequests.length;
+    
+            // Log the collected metrics
+            console.log(`Buffer Level (Video): ${videoBufferLevel}s, Buffer Level (Audio): ${audioBufferLevel}s`);
+            console.log(`Throughput: ${throughput} Mbps`);
+            console.log(`Average Latency: ${averageLatency} ms`);
+    
+            // Append metrics to the array
+            metricsData.push({
+                videoBufferLevel: videoBufferLevel,
+                audioBufferLevel: audioBufferLevel,
+                throughput: throughput,
+                averageLatency: averageLatency
+            });
+        }
+    
+        function collectMetrics() {
+            let abrSettings = $scope.player.getSettings().streaming.abr;
+            console.log('Current ABR Settings:', abrSettings.ABRStrategy);
+            collectMetricsForAlgorithm();
+        }
+    
+        // Set up interval to collect metrics every 8 seconds
+        $scope.metricsTimer = setInterval(function () {
+            collectMetrics();
+            $scope.chartCount++;
+        }, 8000);
+    
+        // After 6 minutes, save metrics to CSV
+        setTimeout(function () {
+            saveMetricsToCSV();
+        }, 372000); // 6 minutes
+    
+        // Function to save metrics data to CSV
+        function saveMetricsToCSV() {
+            let csvContent = "data:text/csv;charset=utf-8," 
+                + "Video Buffer Level (s),Audio Buffer Level (s),Throughput (Mbps),Average Latency (ms)\n"
+                + metricsData.map(item => {
+                    return `${item.videoBufferLevel},${item.audioBufferLevel},${item.throughput},${item.averageLatency}`;
+                }).join("\n");
+    
+            // Encode CSV content as a URI
+            let encodedUri = encodeURI(csvContent);
+    
+            // Create a temporary link element to download the CSV file
+            let link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "metrics_data.csv");
+            document.body.appendChild(link);
+    
+            // Automatically trigger the download
+            link.click();
+            
+            // Clean up the link element after download
+            document.body.removeChild(link);
+        }
+    
     }, $scope);
 
     $scope.player.on(dashjs.MediaPlayer.events.PLAYBACK_ENDED, function (e) { /* jshint ignore:line */
